@@ -1,6 +1,5 @@
 import tkinter as tk
 import threading
-import time
 import pyperclip
 import pyttsx3
 import keyboard
@@ -9,44 +8,59 @@ from pystray import MenuItem as item
 from PIL import Image, ImageDraw
 import sys
 
-# 初始化语音引擎
-engine = pyttsx3.init()
-engine.setProperty('rate', 150)
-engine.setProperty('volume', 1)
+# 线程相关变量
+read_thread = None
+engine = None  # 当前语音引擎实例
+engine_lock = threading.Lock()
 
-# 剪贴板朗读逻辑
-def read_clipboard():
+def read_text(text):
+    global engine
+    # 每次新建engine
+    local_engine = pyttsx3.init()
+    local_engine.setProperty('rate', 150)
+    local_engine.setProperty('volume', 1)
+
+    with engine_lock:
+        engine = local_engine  # 记录当前引擎，方便停止
+
+    local_engine.say(text)
+    local_engine.runAndWait()
+
+    with engine_lock:
+        engine = None  # 朗读完成，清空engine引用
+
+def start_reading():
+    global read_thread
+    if read_thread and read_thread.is_alive():
+        return
     text = pyperclip.paste()
     if text.strip():
-        engine.say(text)
-        engine.runAndWait()
+        read_thread = threading.Thread(target=read_text, args=(text,), daemon=True)
+        read_thread.start()
 
-# 持续监听 Ctrl+Alt+R 并朗读
-def listen_clipboard():
-    while True:
-        keyboard.wait('ctrl+alt+r')
-        read_clipboard()
-        time.sleep(0.1)
+def stop_reading():
+    with engine_lock:
+        if engine is not None:
+            engine.stop()
 
-# 托盘关闭程序
+keyboard.add_hotkey('ctrl+alt+r', start_reading)
+keyboard.add_hotkey('ctrl+alt+e', stop_reading)
+
 def on_quit(icon, item):
     icon.stop()
     root.destroy()
     sys.exit()
 
-# 托盘恢复窗口
 def on_show(icon, item):
     icon.stop()
     root.after(0, root.deiconify)
 
-# 创建托盘图标
 def create_image():
     image = Image.new('RGB', (64, 64), "white")
     dc = ImageDraw.Draw(image)
     dc.ellipse((16, 16, 48, 48), fill="black")
     return image
 
-# 最小化到托盘
 def minimize_to_tray():
     root.withdraw()
     tray_icon = pystray.Icon("clipboard_speaker")
@@ -57,17 +71,12 @@ def minimize_to_tray():
     )
     threading.Thread(target=tray_icon.run, daemon=True).start()
 
-# GUI 主程序
 root = tk.Tk()
 root.title("剪贴板英文朗读器")
-root.geometry("300x120")
+root.geometry("320x130")
 
-tk.Label(root, text="程序已启动，需要首先Ctrl + C 来复制你所要朗读的英文之后，按 Ctrl + Alt + R 朗读剪贴板内容").pack(pady=15)
+tk.Label(root, text="1.Ctrl + C 复制文本\n2.Ctrl + Alt + R 开始朗读\n3.Ctrl + Alt + E 停止朗读").pack(pady=15)
 tk.Button(root, text="📥 最小化到托盘", command=minimize_to_tray).pack(pady=10)
 
-# 启动监听线程
-threading.Thread(target=listen_clipboard, daemon=True).start()
-
-# 拦截关闭窗口行为（最小化）
 root.protocol("WM_DELETE_WINDOW", minimize_to_tray)
 root.mainloop()
